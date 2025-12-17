@@ -73,6 +73,35 @@ class WeChatClient:
             logger.error(f"Failed to initialize WeChat client: {e}")
             raise
     
+    def _is_target_group(self, room_name: str) -> bool:
+        """
+        Check if the room is in the target monitor groups using fuzzy matching.
+        Logic:
+        1. Retrieve monitor_groups from settings.
+        2. If 'all' in groups (case-insensitive), return True.
+        3. Check if any configured group is a substring of room_name (case-insensitive).
+        """
+        if not room_name:
+            return False
+
+        settings = get_settings()
+        monitor_groups = settings.ingestion.monitor_groups
+        
+        # Check for 'all' (case-insensitive)
+        if any(g.lower() == "all" for g in monitor_groups):
+            return True
+
+        # Case-insensitive substring matching
+        room_lower = room_name.lower()
+        for target in monitor_groups:
+            # Normalize target to lowercase
+            target_lower = target.lower()
+            # Check if target is a substring of room_name
+            if target_lower in room_lower:
+                return True
+        
+        return False
+
     @apply_jitter
     def get_recent_messages(self) -> List[RawMessage]:
         """
@@ -84,11 +113,6 @@ class WeChatClient:
         try:
             # Get new messages from WeChat
             raw_data = self.wechat.GetNextNewMessage()
-            
-            # Load settings for filtering
-            settings = get_settings()
-            monitor_groups = settings.ingestion.monitor_groups
-            monitor_all = any(g.lower() == "all" for g in monitor_groups)
             
             # Convert to RawMessage objects
             messages = []
@@ -124,11 +148,17 @@ class WeChatClient:
                                 timestamp=timestamp
                             )
                             
+                            # Debug logging for room detection
+                            logger.debug(f"Detected Room: '{raw_msg.room}' (Repr: {repr(raw_msg.room)})")
+                            
                             # Apply Group Filtering
-                            if not monitor_all:
-                                if raw_msg.room not in monitor_groups:
-                                    logger.debug(f"Ignored message from {raw_msg.room}")
-                                    continue
+                            is_target = self._is_target_group(raw_msg.room)
+                            if not is_target:
+                                # Deep Debug Logging for Filter Failures
+                                logger.warning(f"⛔ IGNORED: Room='{raw_msg.room}' | Repr={repr(raw_msg.room)} | Targets={get_settings().ingestion.monitor_groups}")
+                                continue
+                            else:
+                                logger.info(f"✅ ACCEPTED: Room='{raw_msg.room}' matched target.")
                             
                             messages.append(raw_msg)
                         except Exception as e:
