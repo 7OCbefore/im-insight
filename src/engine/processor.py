@@ -71,8 +71,7 @@ class SignalProcessor:
                 raw_content=message.content
             )
         
-        # Log "L1 Hit"
-        print(f"L1 Hit: {message.content}")
+
         
         # Check if intelligence is enabled
         if settings.intelligence.enabled:

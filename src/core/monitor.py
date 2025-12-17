@@ -117,10 +117,12 @@ class WeChatClient:
             # Convert to RawMessage objects
             messages = []
             if isinstance(raw_data, dict):
-                for chat_name, msg_list in raw_data.items():
-                    if not isinstance(msg_list, list):
-                        continue
-                    
+                # Extract chat_name and msg list explicitly from the dict
+                # Fix for Technical Advisory 001: Incorrect Room Name Parsing
+                chat_name = raw_data.get('chat_name', 'Unknown')
+                msg_list = raw_data.get('msg', [])
+                
+                if isinstance(msg_list, list):
                     for msg in msg_list:
                         # Extract message attributes
                         try:
@@ -148,17 +150,10 @@ class WeChatClient:
                                 timestamp=timestamp
                             )
                             
-                            # Debug logging for room detection
-                            logger.debug(f"Detected Room: '{raw_msg.room}' (Repr: {repr(raw_msg.room)})")
-                            
                             # Apply Group Filtering
                             is_target = self._is_target_group(raw_msg.room)
                             if not is_target:
-                                # Deep Debug Logging for Filter Failures
-                                logger.warning(f"⛔ IGNORED: Room='{raw_msg.room}' | Repr={repr(raw_msg.room)} | Targets={get_settings().ingestion.monitor_groups}")
                                 continue
-                            else:
-                                logger.info(f"✅ ACCEPTED: Room='{raw_msg.room}' matched target.")
                             
                             messages.append(raw_msg)
                         except Exception as e:
