@@ -79,7 +79,7 @@ class SignalProcessor:
             llm_result = self.llm_gateway.analyze(
                 message.content,
                 api_key=settings.intelligence.api_key.get_secret_value(),
-                base_url=settings.intelligence.base_url,
+                endpoint_url=settings.intelligence.endpoint_url,
                 model=settings.intelligence.model,
                 temperature=settings.intelligence.temperature,
                 timeout=settings.intelligence.timeout

@@ -30,7 +30,7 @@ class IntelligenceConfig(BaseModel):
     """LLM intelligence processing configuration."""
     enabled: bool
     provider: str
-    base_url: str
+    endpoint_url: str
     api_key: SecretStr
     model: str
     temperature: float

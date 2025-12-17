@@ -6,9 +6,13 @@ uses an LLM to extract structured data from relevant messages.
 """
 
 import json
-import time
+import asyncio
 import httpx
+import logging
 from typing import Optional, Dict, Any
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 
 class LLMGateway:
@@ -19,14 +23,98 @@ class LLMGateway:
         Initialize the LLM Gateway.
         Note: Actual API parameters are passed in the analyze method.
         """
-        # System prompt for the LLM
+        # System prompt for the LLM - strictly asks for JSON output
         self.system_prompt = (
-            "You are a trading assistant. Extract the intent (Buy/Sell), "
-            "Item Name, Price, and Quantity from the message. "
-            "Return strictly JSON. If no trading intent, return null."
+            "你是一位专业的二级市场（烟酒/礼品）交易情报分析师。请分析用户的聊天消息，提取结构化数据。\n"
+            "请准确识别以下信息：\n"
+            "1. 意图 (intent): 识别是 'Buy' (求/收/需/高价收) 还是 'Sell' (出/卖/有/出货)。如果无法确定或为闲聊，忽略。\n"
+            "2. 品名 (Item Name): 提取商品核心名称，如 '飞天'、'龙年'、'芙蓉王'、'华子'。请自动补全商品全称（如 '散飞' -> '飞天茅台'）。\n"
+            "3. 价格 (Price): 提取具体的数字价格。如果包含'xxx'、'私聊'或未明示价格，请填 0。\n"
+            "4. 规格 (Specs): 提取年份、包装（原箱/散瓶）、票据（带票/不带票）等细节。\n"
+            "\n"
+            "输出严格要求：\n"
+            "- 必须且仅返回合法的 JSON 格式，不要包含 Markdown 标记（如 ```json）。\n"
+            "- 字段键名必须严格为：\"intent\", \"Item Name\", \"Price\"。\n"
+            "- 如果消息不包含交易意图，请直接返回 null。\n"
+            "\n"
+            "示例 1：\n"
+            "输入: '出两个24散飞 2810'\n"
+            "输出: {\"intent\": \"Sell\", \"Item Name\": \"飞天茅台\", \"Price\": 2810}\n"
+            "\n"
+            "示例 2：\n"
+            "输入: '求购中华，有的私聊'\n"
+            "输出: {\"intent\": \"Buy\", \"Item Name\": \"中华\", \"Price\": 0}"
         )
     
-    def analyze(self, text: str, api_key: str, base_url: str, model: str, 
+    async def _call_api(self, endpoint_url: str, api_key: str, model: str, 
+                       messages: list, temperature: float = 0.1, 
+                       timeout: int = 10) -> Optional[Dict]:
+        """
+        Call the LLM API asynchronously with full control over the request.
+        
+        Args:
+            endpoint_url (str): Full endpoint URL for the API
+            api_key (str): API key for authentication
+            model (str): Model identifier to use for completions
+            messages (list): Messages for the chat completion API
+            temperature (float): Sampling temperature for the model
+            timeout (int): Request timeout in seconds
+            
+        Returns:
+            Optional[Dict]: API response or None if failed
+        """
+        # Prepare the request payload with required parameters
+        payload = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "top_p": 0.7,
+            "response_format": {"type": "json_object"}  # Force JSON if model supports it
+        }
+        
+        # Create async HTTP client with settings
+        async with httpx.AsyncClient(
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            timeout=timeout
+        ) as client:
+            try:
+                # Use the endpoint_url directly without appending paths
+                response = await client.post(endpoint_url, json=payload)
+                
+                # Check for non-200 status codes
+                if response.status_code != 200:
+                    logger.error(f"LLM API returned non-200 status code: {response.status_code}")
+                    logger.error(f"Response body: {response.text}")
+                    return None
+                
+                # Parse the response
+                result = response.json()
+                
+                # Extract the content from the assistant's response
+                content = result["choices"][0]["message"]["content"]
+                
+                # Try to parse as JSON
+                try:
+                    parsed_data = json.loads(content)
+                    return parsed_data
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse LLM response as JSON: {content}")
+                    return None
+                    
+            except httpx.TimeoutException as e:
+                logger.error(f"LLM request timed out: {e}")
+                return None
+            except httpx.RequestError as e:
+                logger.error(f"LLM request failed: {e}")
+                return None
+            except Exception as e:
+                logger.error(f"Unexpected error in LLM API call: {e}")
+                return None
+    
+    def analyze(self, text: str, api_key: str, endpoint_url: str, model: str, 
                 temperature: float = 0.1, timeout: int = 10) -> Optional[Dict]:
         """
         Analyze text using the LLM to extract structured data.
@@ -34,7 +122,7 @@ class LLMGateway:
         Args:
             text (str): Text to analyze
             api_key (str): API key for authentication
-            base_url (str): Base URL for the OpenAI-compatible API
+            endpoint_url (str): Full endpoint URL for the API
             model (str): Model identifier to use for completions
             temperature (float): Sampling temperature for the model
             timeout (int): Request timeout in seconds
@@ -48,72 +136,19 @@ class LLMGateway:
             {"role": "user", "content": text}
         ]
         
-        # Prepare the request payload
-        payload = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": 200
-        }
-        
-        # Create HTTP client with settings from config
-        client = httpx.Client(
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            timeout=timeout
-        )
-        
-        # Try up to 3 times with exponential backoff
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                response = client.post(
-                    f"{base_url.rstrip('/')}/chat/completions",
-                    json=payload
-                )
-                
-                # Raise an exception for bad status codes
-                response.raise_for_status()
-                
-                # Parse the response
-                result = response.json()
-                
-                # Extract the content from the assistant's response
-                content = result["choices"][0]["message"]["content"]
-                
-                # Try to parse as JSON
-                try:
-                    parsed_data = json.loads(content)
-                    return parsed_data
-                except json.JSONDecodeError:
-                    # If JSON parsing fails, log and continue
-                    print(f"Failed to parse LLM response as JSON: {content}")
-                    return None
-                    
-            except httpx.TimeoutException:
-                # Exponential backoff: 1s, 2s, 4s
-                if attempt < max_retries - 1:
-                    wait_time = 2 ** attempt
-                    print(f"LLM request timed out. Retrying in {wait_time}s...")
-                    time.sleep(wait_time)
-                else:
-                    print("LLM request failed after max retries due to timeout")
-                    return None
-                    
-            except httpx.RequestError as e:
-                print(f"LLM request failed: {e}")
-                return None
-                
-            except Exception as e:
-                print(f"Unexpected error in LLM analysis: {e}")
-                return None
-            finally:
-                # Close the client connection
-                client.close()
-        
-        return None  # Failed after all retries
+        # Run the async method in a new event loop
+        try:
+            # Create a new event loop for the async call
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(
+                self._call_api(endpoint_url, api_key, model, messages, temperature, timeout)
+            )
+            loop.close()
+            return result
+        except Exception as e:
+            logger.error(f"Error running async LLM call: {e}")
+            return None
 
 
 # Example usage
