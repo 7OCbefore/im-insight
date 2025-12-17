@@ -1,1 +1,5 @@
-wxauto>=0.1.0
+git+https://github.com/cluic/wxauto.git
+pydantic>=2.0
+pyyaml
+httpx
+openai
