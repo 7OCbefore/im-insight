@@ -8,6 +8,7 @@ from functools import wraps
 
 # Local imports
 from src.types.message import RawMessage
+from src.config.loader import get_settings
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -84,6 +85,11 @@ class WeChatClient:
             # Get new messages from WeChat
             raw_data = self.wechat.GetNextNewMessage()
             
+            # Load settings for filtering
+            settings = get_settings()
+            monitor_groups = settings.ingestion.monitor_groups
+            monitor_all = any(g.lower() == "all" for g in monitor_groups)
+            
             # Convert to RawMessage objects
             messages = []
             if isinstance(raw_data, dict):
@@ -117,6 +123,13 @@ class WeChatClient:
                                 room=chat_name if chat_name != sender else None,  # Assume room if different from sender
                                 timestamp=timestamp
                             )
+                            
+                            # Apply Group Filtering
+                            if not monitor_all:
+                                if raw_msg.room not in monitor_groups:
+                                    logger.debug(f"Ignored message from {raw_msg.room}")
+                                    continue
+                            
                             messages.append(raw_msg)
                         except Exception as e:
                             logger.warning(f"Failed to process individual message: {e}")

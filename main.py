@@ -47,10 +47,17 @@ def main():
     try:
         # Import our modules
         from src.core.monitor import WeChatClient
+        from src.engine.processor import SignalProcessor
+        from src.action.exporter import CsvExporter
         
         # Initialize WeChat client with settings
         logger.info("Initializing WeChat client...")
         client = WeChatClient()
+        
+        # Initialize Processor and Exporter
+        logger.info("Initializing Signal Processor and Exporter...")
+        processor = SignalProcessor()
+        exporter = CsvExporter()
         
         # Main monitoring loop with configurable interval
         logger.info("Starting WeChat monitoring loop...")
@@ -59,6 +66,18 @@ def main():
                 messages = client.get_recent_messages()
                 for msg in messages:
                     logger.info(f"New message - Sender: {msg.sender}, Room: {msg.room}, Content: {msg.content[:50]}...")
+                    
+                    # Process message to extract signal
+                    signal = processor.process(msg)
+                    
+                    # Save signal to CSV
+                    exporter.save(signal)
+                    
+                    # Log confirmation
+                    item_display = signal.item if signal.item else "Unknown Item"
+                    price_display = signal.price if signal.price is not None else "N/A"
+                    group_display = signal.group if signal.group else "Direct Message"
+                    logger.info(f"Saved signal from {group_display}: {item_display} @ {price_display}")
                 
                 # Use configurable polling interval
                 scan_interval = settings.ingestion.scan_interval_min

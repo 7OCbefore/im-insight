@@ -23,6 +23,7 @@ class IngestionConfig(BaseModel):
     scan_interval_min: float
     scan_interval_max: float
     target_window_title: str
+    monitor_groups: List[str] = ["all"]
 
 
 class IntelligenceConfig(BaseModel):

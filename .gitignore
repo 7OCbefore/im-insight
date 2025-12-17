@@ -1,2 +1,49 @@
 /1.py
+config/
 wxauto_logs/
+
+# --- Python Basics ---
+
+pycache/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# --- Virtual Environments ---
+
+venv/
+env/
+ENV/
+
+# --- IDE Settings ---
+
+.idea/
+.vscode/
+*.swp
+
+# --- Logs ---
+
+*.log
+logs/
+
+# --- Project Specific (CRITICAL SECURITY) ---
+# 忽略包含真实 API Key 的配置文件
+
+config/settings.yaml
+!config/settings.yaml.example
