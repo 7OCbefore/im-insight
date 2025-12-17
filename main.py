@@ -6,6 +6,7 @@ Main entry point for IM-Insight WeChat monitoring.
 import logging
 import sys
 import time
+from src.config.loader import get_settings
 
 # Configure logging
 logging.basicConfig(
@@ -28,6 +29,17 @@ def check_wxauto_installed():
 
 def main():
     """Main function to run the WeChat monitoring loop."""
+    # Load application settings
+    try:
+        settings = get_settings()
+        logger.info(f"Loaded settings for {settings.app.name} v{settings.app.version if hasattr(settings.app, 'version') else '1.0'}")
+    except FileNotFoundError as e:
+        logger.error(str(e))
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Failed to load settings: {e}")
+        sys.exit(1)
+    
     # Check if wxauto is installed
     if not check_wxauto_installed():
         raise ImportError("wxauto library is required but not installed")
@@ -36,11 +48,11 @@ def main():
         # Import our modules
         from src.core.monitor import WeChatClient
         
-        # Initialize WeChat client
+        # Initialize WeChat client with settings
         logger.info("Initializing WeChat client...")
         client = WeChatClient()
         
-        # Main monitoring loop
+        # Main monitoring loop with configurable interval
         logger.info("Starting WeChat monitoring loop...")
         while True:
             try:
@@ -48,8 +60,9 @@ def main():
                 for msg in messages:
                     logger.info(f"New message - Sender: {msg.sender}, Room: {msg.room}, Content: {msg.content[:50]}...")
                 
-                # Poll every 1 second
-                time.sleep(1)
+                # Use configurable polling interval
+                scan_interval = settings.ingestion.scan_interval_min
+                time.sleep(scan_interval)
                 
             except KeyboardInterrupt:
                 logger.info("Monitoring stopped by user")

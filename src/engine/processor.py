@@ -10,23 +10,10 @@ from typing import List, Dict, Any
 from src.types.message import RawMessage
 from src.types.market_signal import MarketSignal
 from src.engine.llm_gateway import LLMGateway
+from src.config.loader import get_settings
 
-# Mock settings object - in a real implementation this would come from a config
-class Settings:
-    def __init__(self):
-        self.whitelist = [
-            r'\b(buy|sell)\b',
-            r'\b(stock|option|future)\b',
-            r'\b(price|value)\b'
-        ]
-        self.blacklist = [
-            r'\b(spam|advertisement)\b',
-            r'\b(ignore|discard)\b'
-        ]
-        self.intelligence = type('obj', (object,), {'enabled': True})()
-
-# Global settings instance
-settings = Settings()
+# Load application settings
+settings = get_settings()
 
 
 class SignalProcessor:
@@ -35,9 +22,9 @@ class SignalProcessor:
     def __init__(self):
         """Initialize the SignalProcessor with compiled regex patterns and LLM gateway."""
         self.whitelist_patterns = [re.compile(pattern, re.IGNORECASE) 
-                                 for pattern in settings.whitelist]
+                                 for pattern in settings.rules.whitelist]
         self.blacklist_patterns = [re.compile(pattern, re.IGNORECASE) 
-                                 for pattern in settings.blacklist]
+                                 for pattern in settings.rules.blacklist]
         self.llm_gateway = LLMGateway()
     
     def is_relevant(self, text: str) -> bool:
@@ -96,7 +83,14 @@ class SignalProcessor:
         # Check if intelligence is enabled
         if settings.intelligence.enabled:
             # Call LLMGateway.analyze() for intelligent extraction
-            llm_result = self.llm_gateway.analyze(message.content)
+            llm_result = self.llm_gateway.analyze(
+                message.content,
+                api_key=settings.intelligence.api_key.get_secret_value(),
+                base_url=settings.intelligence.base_url,
+                model=settings.intelligence.model,
+                temperature=settings.intelligence.temperature,
+                timeout=settings.intelligence.timeout
+            )
             
             # If LLM succeeds, use its result
             if llm_result:

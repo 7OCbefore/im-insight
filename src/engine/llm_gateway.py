@@ -14,28 +14,11 @@ from typing import Optional, Dict, Any
 class LLMGateway:
     """Gateway for communicating with an OpenAI-compatible API endpoint."""
     
-    def __init__(self, api_base_url: str = "http://localhost:8000/v1", 
-                 api_key: str = "sk-test-key", 
-                 model: str = "gpt-3.5-turbo"):
+    def __init__(self):
         """
         Initialize the LLM Gateway.
-        
-        Args:
-            api_base_url (str): Base URL for the OpenAI-compatible API
-            api_key (str): API key for authentication
-            model (str): Model identifier to use for completions
+        Note: Actual API parameters are passed in the analyze method.
         """
-        self.api_base_url = api_base_url.rstrip("/")
-        self.api_key = api_key
-        self.model = model
-        self.client = httpx.Client(
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            },
-            timeout=5.0  # Hard timeout to prevent blocking
-        )
-        
         # System prompt for the LLM
         self.system_prompt = (
             "You are a trading assistant. Extract the intent (Buy/Sell), "
@@ -43,21 +26,21 @@ class LLMGateway:
             "Return strictly JSON. If no trading intent, return null."
         )
     
-    def analyze(self, text: str) -> Optional[Dict]:
+    def analyze(self, text: str, api_key: str, base_url: str, model: str, 
+                temperature: float = 0.1, timeout: int = 10) -> Optional[Dict]:
         """
         Analyze text using the LLM to extract structured data.
         
         Args:
             text (str): Text to analyze
+            api_key (str): API key for authentication
+            base_url (str): Base URL for the OpenAI-compatible API
+            model (str): Model identifier to use for completions
+            temperature (float): Sampling temperature for the model
+            timeout (int): Request timeout in seconds
             
         Returns:
             Optional[Dict]: Extracted data or None if no trading intent
-            
-        Examples:
-            >>> gateway = LLMGateway()
-            >>> result = gateway.analyze("Buy 100 shares of AAPL at $150")
-            >>> isinstance(result, dict)
-            True
         """
         # Prepare the messages for the chat completion API
         messages = [
@@ -67,18 +50,27 @@ class LLMGateway:
         
         # Prepare the request payload
         payload = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
-            "temperature": 0.1,
+            "temperature": temperature,
             "max_tokens": 200
         }
+        
+        # Create HTTP client with settings from config
+        client = httpx.Client(
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            timeout=timeout
+        )
         
         # Try up to 3 times with exponential backoff
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                response = self.client.post(
-                    f"{self.api_base_url}/chat/completions",
+                response = client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
                     json=payload
                 )
                 
@@ -117,6 +109,9 @@ class LLMGateway:
             except Exception as e:
                 print(f"Unexpected error in LLM analysis: {e}")
                 return None
+            finally:
+                # Close the client connection
+                client.close()
         
         return None  # Failed after all retries
 
