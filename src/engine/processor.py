@@ -78,25 +78,34 @@ class SignalProcessor:
                 timeout=settings.intelligence.timeout
             )
 
-            # If LLM succeeds, use its results
+            # If LLM succeeds and returns valid signals, use them
             if llm_results:
                 signals = []
                 for llm_result in llm_results:
-                    signals.append(MarketSignal(
-                        raw_msg_id=message.id,
-                        intent=llm_result.get("intent", "unknown"),
-                        timestamp=message.timestamp,
-                        group=message.room,
-                        sender=message.sender,
-                        raw_content=message.content,
-                        item=llm_result.get("Item Name"),
-                        price=llm_result.get("Price"),
-                        specs=llm_result.get("Specs"),
-                        confidence_score=0.9  # High confidence for LLM extraction
-                    ))
+                    # CRITICAL: Verify that LLM actually extracted meaningful data
+                    intent = llm_result.get("intent", "").strip()
+                    item_name = llm_result.get("Item Name", "").strip() if llm_result.get("Item Name") else ""
+
+                    # Only create signal if both intent and item are present
+                    if intent and item_name:
+                        signals.append(MarketSignal(
+                            raw_msg_id=message.id,
+                            intent=intent,
+                            timestamp=message.timestamp,
+                            group=message.room,
+                            sender=message.sender,
+                            raw_content=message.content,
+                            item=item_name,
+                            price=llm_result.get("Price"),
+                            specs=llm_result.get("Specs"),
+                            confidence_score=0.9  # High confidence for LLM extraction
+                        ))
+                    else:
+                        logger.debug(f"Dropped (LLM extracted insufficient data): intent={intent}, item={item_name}")
+
                 return signals
             else:
-                # If LLM fails, fall back to basic extraction
+                # LLM failed or returned empty - try fallback ONLY if content has clear trading keywords
                 return self._extract_basic_info(message)
         else:
             # Step 4: Fallback (Regex extraction if LLM disabled)
@@ -104,38 +113,64 @@ class SignalProcessor:
     
     def _extract_basic_info(self, message: RawMessage) -> List[MarketSignal]:
         """
-        Extract basic information from a relevant message.
-        
+        Extract basic information from a relevant message using simple regex matching.
+        Only creates signals for messages with CLEAR trading intent.
+
         Args:
             message (RawMessage): The relevant message
-            
+
         Returns:
-            List[MarketSignal]: List containing basic market signal with extracted info
+            List[MarketSignal]: List containing basic market signal, or empty list if no clear intent
         """
         content = message.content.lower()
-        
-        # Simple intent detection
-        intent = "unknown"
-        if "buy" in content:
-            intent = "buy"
-        elif "sell" in content:
-            intent = "sell"
-            
-        # Simple item extraction (very basic)
-        item = None
-        words = content.split()
-        for i, word in enumerate(words):
-            if word in ["buy", "sell"] and i + 1 < len(words):
-                item = words[i + 1].upper()
-                break
-                
-        return [MarketSignal(
-            raw_msg_id=message.id,
-            intent=intent,
-            timestamp=message.timestamp,
-            group=message.room,
-            sender=message.sender,
-            raw_content=message.content,
-            item=item,
-            confidence_score=0.5  # Low confidence for basic extraction
-        )]
+        content_stripped = content.strip()
+
+        # Define clear trading intent keywords
+        buy_keywords = ["求购", "收", "买", "需求", "要"]
+        sell_keywords = ["出", "卖", "出售", "有货", "供应"]
+
+        # Check for clear BUY intent
+        for keyword in buy_keywords:
+            if keyword in content_stripped:
+                logger.debug(f"Detected BUY intent via keyword '{keyword}'")
+
+                # Simple item extraction - get text after the keyword
+                parts = content_stripped.split(keyword, 1)
+                if len(parts) > 1:
+                    item = parts[1].split()[0].upper() if parts[1].split() else "UNKNOWN"
+
+                    return [MarketSignal(
+                        raw_msg_id=message.id,
+                        intent="buy",
+                        timestamp=message.timestamp,
+                        group=message.room,
+                        sender=message.sender,
+                        raw_content=message.content,
+                        item=item,
+                        confidence_score=0.6  # Medium confidence for basic extraction
+                    )]
+
+        # Check for clear SELL intent
+        for keyword in sell_keywords:
+            if keyword in content_stripped:
+                logger.debug(f"Detected SELL intent via keyword '{keyword}'")
+
+                # Simple item extraction - get text after the keyword
+                parts = content_stripped.split(keyword, 1)
+                if len(parts) > 1:
+                    item = parts[1].split()[0].upper() if parts[1].split() else "UNKNOWN"
+
+                    return [MarketSignal(
+                        raw_msg_id=message.id,
+                        intent="sell",
+                        timestamp=message.timestamp,
+                        group=message.room,
+                        sender=message.sender,
+                        raw_content=message.content,
+                        item=item,
+                        confidence_score=0.6  # Medium confidence for basic extraction
+                    )]
+
+        # CRITICAL: No clear trading intent found - return empty list
+        logger.debug(f"Dropped (No clear trading intent): {content[:50]}...")
+        return []

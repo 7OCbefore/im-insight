@@ -103,70 +103,199 @@ class WeChatClient:
         return False
 
     @apply_jitter
-    def get_recent_messages(self) -> List[RawMessage]:
+    def _scan_target_sessions(self) -> List[RawMessage]:
         """
-        Fetch recent messages from WeChat client using targeted filtering.
+        Scan and process ONLY target sessions from the UI tree.
+
+        This implements Look-Before-Leap strategy:
+        1. Inspect SessionBox UI element without clicking randomly
+        2. Filter sessions by monitor_groups settings
+        3. ONLY click sessions that match target groups
+        4. Retrieve messages from matched sessions only
 
         Returns:
-            List of RawMessage objects
+            List of RawMessage objects from target sessions only
         """
         messages = []
 
         try:
-            # Get new messages from WeChat (keeps original API for compatibility)
-            raw_data = self.wechat.GetNextNewMessage()
+            # Get the main WeChat window
+            wxchat = self.wechat
 
-            if isinstance(raw_data, dict):
-                # Extract chat_name and msg list explicitly from the dict
-                chat_name = raw_data.get('chat_name', 'Unknown')
-                msg_list = raw_data.get('msg', [])
-
-                # EARLY FILTERING: Check if chat_name is a target group BEFORE processing
-                # This prevents processing non-target sessions (Personal DMs, irrelevant groups)
-                if not self._is_target_group(chat_name):
-                    logger.debug(f"Skipping non-target session: {chat_name}")
-                    return []  # Return empty list - don't process non-targets
-
-                logger.info(f"Processing target session: {chat_name}")
-
-                # Only process messages from target groups
-                if isinstance(msg_list, list):
-                    for msg in msg_list:
-                        # Extract message attributes
+            # Access SessionList through wxauto's GetSessionList method if available
+            # Fall back to GetNextNewMessage with filtering if direct UI access not possible
+            try:
+                # Try to get session list using wxauto's method
+                if hasattr(wxchat, 'GetSessionList'):
+                    session_list = wxchat.GetSessionList()
+                else:
+                    # Fallback: Get all new messages and filter by target groups
+                    raw_data = wxchat.GetNextNewMessage()
+                    if raw_data and isinstance(raw_data, dict):
+                        chat_name = raw_data.get('chat_name', 'Unknown')
+                        if self._is_target_group(chat_name):
+                            logger.info(f"Processing target session: {chat_name}")
+                            raw_data_list = [raw_data]
+                        else:
+                            logger.debug(f"Skipping non-target session: {chat_name}")
+                            return []
+                    else:
+                        return []
+                # Process the session(s)
+                if 'session_list' in locals():
+                    # Iterate through actual session list
+                    for session_item in session_list:
                         try:
-                            content = getattr(msg, 'content', '')
-                            sender = getattr(msg, 'sender', '')
+                            # Extract session name - Try multiple attributes for compatibility
+                            session_name = getattr(session_item, 'name', '') or \
+                                         getattr(session_item, 'Title', '') or \
+                                         getattr(session_item, 'Text', '') or \
+                                         str(session_item)
 
-                            # Try to get timestamp, fallback to current time if not available
-                            timestamp = getattr(msg, 'time', datetime.now())
-                            if not isinstance(timestamp, datetime):
-                                timestamp = datetime.now()
-
-                            # Check for duplicates
-                            if self.deduplicator.is_duplicate(timestamp, sender, content):
+                            if not session_name:
                                 continue
 
-                            # Generate message ID
-                            msg_id = self.deduplicator._generate_hash(timestamp, sender, content)
+                            # Filter by target groups - THIS IS THE CRITICAL CHECK
+                            if not self._is_target_group(session_name):
+                                logger.debug(f"Skipping non-target session: {session_name}")
+                                continue  # SKIP - No click, no read
 
-                            # Create RawMessage object
-                            raw_msg = RawMessage(
-                                id=msg_id,
-                                content=content,
-                                sender=sender,
-                                room=chat_name if chat_name != sender else None,
-                                timestamp=timestamp
-                            )
+                            # TARGET SESSION - Click and read
+                            logger.info(f"Target session found: {session_name}, clicking to read...")
+                            session_item.click()
 
-                            # Add to messages list
-                            messages.append(raw_msg)
+                            # Small delay to ensure UI updates
+                            import time
+                            time.sleep(0.2)
+
+                            # Get all messages from this target session
+                            session_messages = wxchat.GetAllMessage(savepic=False)
+
+                            # Process messages from this target session
+                            if isinstance(session_messages, dict):
+                                chat_name = session_messages.get('chat_name', session_name)
+                                msg_list = session_messages.get('msg', [])
+
+                                if isinstance(msg_list, list):
+                                    for msg in msg_list:
+                                        try:
+                                            content = getattr(msg, 'content', '')
+                                            sender = getattr(msg, 'sender', '')
+                                            timestamp = getattr(msg, 'time', datetime.now())
+                                            if not isinstance(timestamp, datetime):
+                                                timestamp = datetime.now()
+
+                                            # Check for duplicates
+                                            if self.deduplicator.is_duplicate(timestamp, sender, content):
+                                                continue
+
+                                            msg_id = self.deduplicator._generate_hash(timestamp, sender, content)
+
+                                            raw_msg = RawMessage(
+                                                id=msg_id,
+                                                content=content,
+                                                sender=sender,
+                                                room=chat_name if chat_name != sender else None,
+                                                timestamp=timestamp
+                                            )
+                                            messages.append(raw_msg)
+
+                                        except Exception as e:
+                                            logger.warning(f"Failed to process message from {session_name}: {e}")
+                                            continue
 
                         except Exception as e:
-                            logger.warning(f"Failed to process individual message: {e}")
+                            logger.warning(f"Failed to process session {session_name if 'session_name' in locals() else 'unknown'}: {e}")
                             continue
+                elif 'raw_data_list' in locals():
+                    # Process filtered data from fallback path
+                    for raw_data in raw_data_list:
+                        if isinstance(raw_data, dict):
+                            chat_name = raw_data.get('chat_name', 'Unknown')
+                            msg_list = raw_data.get('msg', [])
+
+                            if isinstance(msg_list, list):
+                                for msg in msg_list:
+                                    try:
+                                        content = getattr(msg, 'content', '')
+                                        sender = getattr(msg, 'sender', '')
+                                        timestamp = getattr(msg, 'time', datetime.now())
+                                        if not isinstance(timestamp, datetime):
+                                            timestamp = datetime.now()
+
+                                        if self.deduplicator.is_duplicate(timestamp, sender, content):
+                                            continue
+
+                                        msg_id = self.deduplicator._generate_hash(timestamp, sender, content)
+
+                                        raw_msg = RawMessage(
+                                            id=msg_id,
+                                            content=content,
+                                            sender=sender,
+                                            room=chat_name if chat_name != sender else None,
+                                            timestamp=timestamp
+                                        )
+                                        messages.append(raw_msg)
+
+                                    except Exception as e:
+                                        logger.warning(f"Failed to process individual message: {e}")
+                                        continue
+
+            except AttributeError:
+                # If GetSessionList doesn't exist, fall back to targeted GetNextNewMessage
+                logger.debug("GetSessionList not available, using fallback method")
+                raw_data = wxchat.GetNextNewMessage()
+
+                if raw_data and isinstance(raw_data, dict):
+                    chat_name = raw_data.get('chat_name', 'Unknown')
+
+                    # CRITICAL: Check target BEFORE processing
+                    if not self._is_target_group(chat_name):
+                        logger.debug(f"Skipping non-target session: {chat_name}")
+                        return []  # Early return - don't process non-targets
+
+                    logger.info(f"Processing target session: {chat_name}")
+
+                    msg_list = raw_data.get('msg', [])
+                    if isinstance(msg_list, list):
+                        for msg in msg_list:
+                            try:
+                                content = getattr(msg, 'content', '')
+                                sender = getattr(msg, 'sender', '')
+                                timestamp = getattr(msg, 'time', datetime.now())
+                                if not isinstance(timestamp, datetime):
+                                    timestamp = datetime.now()
+
+                                if self.deduplicator.is_duplicate(timestamp, sender, content):
+                                    continue
+
+                                msg_id = self.deduplicator._generate_hash(timestamp, sender, content)
+
+                                raw_msg = RawMessage(
+                                    id=msg_id,
+                                    content=content,
+                                    sender=sender,
+                                    room=chat_name if chat_name != sender else None,
+                                    timestamp=timestamp
+                                )
+                                messages.append(raw_msg)
+
+                            except Exception as e:
+                                logger.warning(f"Failed to process individual message: {e}")
+                                continue
 
             return messages
 
         except Exception as e:
-            logger.error(f"Error fetching messages from WeChat: {e}")
+            logger.error(f"Error in _scan_target_sessions: {e}")
             return []
+
+    def get_recent_messages(self) -> List[RawMessage]:
+        """
+        Fetch recent messages from WeChat client using targeted scanning.
+
+        Returns:
+            List of RawMessage objects
+        """
+        # Call the protected scanning method that enforces target filtering
+        return self._scan_target_sessions()
