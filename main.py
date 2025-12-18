@@ -68,14 +68,15 @@ def main():
                     for msg in messages:
                         logger.info(f"New message - Sender: {msg.sender}, Room: {msg.room}, Content: {msg.content[:50]}...")
                         
-                        # Process message to extract signal
-                        signal = processor.process(msg)
+                        # Process message to extract signals
+                        signals = processor.process(msg)
                         
-                        # Save signal to dual CSV tables
-                        recorder.save(signal)
+                        # Save each signal to dual CSV tables
+                        for signal in signals:
+                            recorder.save(signal)
                         
                         # Log confirmation (no popups)
-                        logger.info("Signal recorded to Session & History logs.")
+                        logger.info(f"{len(signals)} signal(s) recorded to Session & History logs.")
                     
                     # Use configurable polling interval
                     scan_interval = settings.ingestion.scan_interval_min

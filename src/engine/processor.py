@@ -49,7 +49,7 @@ class SignalProcessor:
                 
         return False
     
-    def process(self, message: RawMessage) -> MarketSignal:
+    def process(self, message: RawMessage) -> List[MarketSignal]:
         """
         Process a raw message through the L1 filter.
         
@@ -57,26 +57,26 @@ class SignalProcessor:
             message (RawMessage): The raw message to process
             
         Returns:
-            MarketSignal: Processed market signal
+            List[MarketSignal]: List of processed market signals
         """
         # Run is_relevant check
         if not self.is_relevant(message.content):
             # Return a basic signal indicating manual check needed
-            return MarketSignal(
+            return [MarketSignal(
                 raw_msg_id=message.id,
                 intent="manual_check",
                 timestamp=message.timestamp,
                 group=message.room,
                 sender=message.sender,
                 raw_content=message.content
-            )
+            )]
         
 
         
         # Check if intelligence is enabled
         if settings.intelligence.enabled:
             # Call LLMGateway.analyze() for intelligent extraction
-            llm_result = self.llm_gateway.analyze(
+            llm_results = self.llm_gateway.analyze(
                 message.content,
                 api_key=settings.intelligence.api_key.get_secret_value(),
                 endpoint_url=settings.intelligence.endpoint_url,
@@ -85,35 +85,38 @@ class SignalProcessor:
                 timeout=settings.intelligence.timeout
             )
             
-            # If LLM succeeds, use its result
-            if llm_result:
-                return MarketSignal(
-                    raw_msg_id=message.id,
-                    intent=llm_result.get("intent", "unknown"),
-                    timestamp=message.timestamp,
-                    group=message.room,
-                    sender=message.sender,
-                    raw_content=message.content,
-                    item=llm_result.get("Item Name"),
-                    price=llm_result.get("Price"),
-                    specs=llm_result.get("Specs"),
-                    confidence_score=0.9  # High confidence for LLM extraction
-                )
+            # If LLM succeeds, use its results
+            if llm_results:
+                signals = []
+                for llm_result in llm_results:
+                    signals.append(MarketSignal(
+                        raw_msg_id=message.id,
+                        intent=llm_result.get("intent", "unknown"),
+                        timestamp=message.timestamp,
+                        group=message.room,
+                        sender=message.sender,
+                        raw_content=message.content,
+                        item=llm_result.get("Item Name"),
+                        price=llm_result.get("Price"),
+                        specs=llm_result.get("Specs"),
+                        confidence_score=0.9  # High confidence for LLM extraction
+                    ))
+                return signals
             else:
                 # If LLM fails, fall back to basic extraction
-                return self._extract_basic_info(message)
+                return [self._extract_basic_info(message)]
         else:
             # Return basic result with manual_check intent
-            return MarketSignal(
+            return [MarketSignal(
                 raw_msg_id=message.id,
                 intent="manual_check",
                 timestamp=message.timestamp,
                 group=message.room,
                 sender=message.sender,
                 raw_content=message.content
-            )
+            )]
     
-    def _extract_basic_info(self, message: RawMessage) -> MarketSignal:
+    def _extract_basic_info(self, message: RawMessage) -> List[MarketSignal]:
         """
         Extract basic information from a relevant message.
         
@@ -121,7 +124,7 @@ class SignalProcessor:
             message (RawMessage): The relevant message
             
         Returns:
-            MarketSignal: Basic market signal with extracted info
+            List[MarketSignal]: List containing basic market signal with extracted info
         """
         content = message.content.lower()
         
@@ -140,7 +143,7 @@ class SignalProcessor:
                 item = words[i + 1].upper()
                 break
                 
-        return MarketSignal(
+        return [MarketSignal(
             raw_msg_id=message.id,
             intent=intent,
             timestamp=message.timestamp,
@@ -149,4 +152,4 @@ class SignalProcessor:
             raw_content=message.content,
             item=item,
             confidence_score=0.5  # Low confidence for basic extraction
-        )
+        )]

@@ -9,7 +9,7 @@ import json
 import asyncio
 import httpx
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -23,7 +23,7 @@ class LLMGateway:
         Initialize the LLM Gateway.
         Note: Actual API parameters are passed in the analyze method.
         """
-        # System prompt for the LLM - strictly asks for JSON output
+        # System prompt for the LLM - strictly asks for JSON array output
         self.system_prompt = (
             "你是一位专业的二级市场（烟酒/礼品）交易情报分析师。请分析用户的聊天消息，提取结构化数据。\n"
             "请准确识别以下信息：\n"
@@ -33,22 +33,27 @@ class LLMGateway:
             "4. 规格 (Specs): 提取年份、包装（原箱/散瓶）、票据（带票/不带票）等细节。\n"
             "\n"
             "输出严格要求：\n"
-            "- 必须且仅返回合法的 JSON 格式，不要包含 Markdown 标记（如 ```json）。\n"
-            "- 字段键名必须严格为：\"intent\", \"Item Name\", \"Price\"。\n"
-            "- 如果消息不包含交易意图，请直接返回 null。\n"
+            "- 必须且仅返回合法的 JSON 数组格式，不要包含 Markdown 标记（如 ```json）。\n"
+            "- 数组中的每个对象都必须包含字段：\"intent\", \"Item Name\", \"Price\"。\n"
+            "- 如果消息包含多个商品，请以数组形式返回所有商品信息。\n"
+            "- 如果消息不包含交易意图，请返回空数组 []。\n"
             "\n"
             "示例 1：\n"
             "输入: '出两个24散飞 2810'\n"
-            "输出: {\"intent\": \"Sell\", \"Item Name\": \"飞天茅台\", \"Price\": 2810}\n"
+            "输出: [{\"intent\": \"Sell\", \"Item Name\": \"飞天茅台\", \"Price\": 2810}]\n"
             "\n"
             "示例 2：\n"
             "输入: '求购中华，有的私聊'\n"
-            "输出: {\"intent\": \"Buy\", \"Item Name\": \"中华\", \"Price\": 0}"
+            "输出: [{\"intent\": \"Buy\", \"Item Name\": \"中华\", \"Price\": 0}]\n"
+            "\n"
+            "示例 3（多商品）：\n"
+            "输入: '出两个24散飞 2810，还有两条芙蓉王 400'\n"
+            "输出: [{\"intent\": \"Sell\", \"Item Name\": \"飞天茅台\", \"Price\": 2810}, {\"intent\": \"Sell\", \"Item Name\": \"芙蓉王\", \"Price\": 400}]"
         )
     
     async def _call_api(self, endpoint_url: str, api_key: str, model: str, 
                        messages: list, temperature: float = 0.1, 
-                       timeout: int = 10) -> Optional[Dict]:
+                       timeout: int = 10) -> Optional[List[Dict]]:
         """
         Call the LLM API asynchronously with full control over the request.
         
@@ -61,7 +66,7 @@ class LLMGateway:
             timeout (int): Request timeout in seconds
             
         Returns:
-            Optional[Dict]: API response or None if failed
+            Optional[List[Dict]]: API response or None if failed
         """
         # Prepare the request payload with required parameters
         payload = {
@@ -115,7 +120,7 @@ class LLMGateway:
                 return None
     
     def analyze(self, text: str, api_key: str, endpoint_url: str, model: str, 
-                temperature: float = 0.1, timeout: int = 10) -> Optional[Dict]:
+                temperature: float = 0.1, timeout: int = 10) -> List[Dict]:
         """
         Analyze text using the LLM to extract structured data.
         
@@ -128,7 +133,7 @@ class LLMGateway:
             timeout (int): Request timeout in seconds
             
         Returns:
-            Optional[Dict]: Extracted data or None if no trading intent
+            List[Dict]: List of extracted data objects, empty list if no trading intent
         """
         # Prepare the messages for the chat completion API
         messages = [
@@ -145,10 +150,23 @@ class LLMGateway:
                 self._call_api(endpoint_url, api_key, model, messages, temperature, timeout)
             )
             loop.close()
-            return result
+            
+            # Handle backward compatibility and ensure we always return a list
+            if result is None:
+                return []
+            elif isinstance(result, dict):
+                # Wrap single dict in a list for backward compatibility
+                return [result]
+            elif isinstance(result, list):
+                # Already a list, return as is
+                return result
+            else:
+                # Unexpected type, return empty list
+                logger.warning(f"Unexpected result type from LLM: {type(result)}")
+                return []
         except Exception as e:
             logger.error(f"Error running async LLM call: {e}")
-            return None
+            return []
 
 
 # Example usage
