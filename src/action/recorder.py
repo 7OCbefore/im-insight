@@ -13,6 +13,24 @@ logger = logging.getLogger(__name__)
 class DualTableRecorder:
     """Records market signals to dual CSV tables: Session Log and Master Log."""
 
+    def _sanitize_text(self, text: str) -> str:
+        """
+        Sanitize text by flattening control characters and removing whitespaces.
+
+        Transformation: Multi-line text -> Single line with " | " separators
+
+        Args:
+            text: Input text (can be None)
+
+        Returns:
+            str: Sanitized single-line text
+        """
+        if text is None:
+            return ""
+
+        # Convert to string, replace all CR/LF with separator, strip whitespace
+        return str(text).replace('\r', ' | ').replace('\n', ' | ').strip()
+
     def __init__(self, data_dir: str = "data"):
         """
         Initialize the recorder with dual table strategy.
@@ -61,22 +79,25 @@ class DualTableRecorder:
     def save(self, signal: MarketSignal):
         """
         Save a market signal to both session and history logs.
-        
+
         Args:
             signal: The MarketSignal to save
         """
         try:
-            # Format the signal data
+            # Format the signal data with sanitization
             time_str = signal.timestamp.strftime("%Y-%m-%d %H:%M:%S") if isinstance(
                 signal.timestamp, datetime) else str(signal.timestamp)
-            
+
             row = [
                 time_str,
-                signal.group if signal.group else "Direct Message",
-                signal.sender,
-                signal.item if signal.item else "",
+                # Sanitize group name (may contain control chars)
+                self._sanitize_text(signal.group) if signal.group else "Direct Message",
+                # Sanitize sender name (may contain control chars)
+                self._sanitize_text(signal.sender),
+                sanitized_item if (sanitized_item := self._sanitize_text(signal.item)) else "",
                 str(signal.price) if signal.price is not None else "",
-                signal.raw_content
+                # Sanitize raw content (FLATTENING STRATEGY)
+                self._sanitize_text(signal.raw_content)
             ]
             
             # Write to both files

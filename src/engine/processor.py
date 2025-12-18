@@ -6,6 +6,7 @@ incoming messages based on whitelist and blacklist patterns.
 """
 
 import re
+import logging
 from typing import List, Dict, Any
 from src.types.message import RawMessage
 from src.types.market_signal import MarketSignal
@@ -14,6 +15,7 @@ from src.config.loader import get_settings
 
 # Load application settings
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 class SignalProcessor:
@@ -27,28 +29,22 @@ class SignalProcessor:
                                  for pattern in settings.rules.blacklist]
         self.llm_gateway = LLMGateway()
     
-    def is_relevant(self, text: str) -> bool:
+    def _contains_any(self, text: str, patterns) -> bool:
         """
-        Determine if a message is relevant based on whitelist/blacklist.
-        
+        Check if text contains any of the compiled patterns.
+
         Args:
-            text (str): The text to evaluate
-            
+            text (str): The text to check
+            patterns: List of compiled regex patterns
+
         Returns:
-            bool: True if relevant, False otherwise
+            bool: True if any pattern matches, False otherwise
         """
-        # Return False if any blacklist pattern matches
-        for pattern in self.blacklist_patterns:
-            if pattern.search(text):
-                return False
-        
-        # Return True only if at least one whitelist pattern matches
-        for pattern in self.whitelist_patterns:
+        for pattern in patterns:
             if pattern.search(text):
                 return True
-                
         return False
-    
+
     def process(self, message: RawMessage) -> List[MarketSignal]:
         """
         Process a raw message through the L1 filter.
@@ -59,21 +55,18 @@ class SignalProcessor:
         Returns:
             List[MarketSignal]: List of processed market signals
         """
-        # Run is_relevant check
-        if not self.is_relevant(message.content):
-            # Return a basic signal indicating manual check needed
-            return [MarketSignal(
-                raw_msg_id=message.id,
-                intent="manual_check",
-                timestamp=message.timestamp,
-                group=message.room,
-                sender=message.sender,
-                raw_content=message.content
-            )]
-        
+        # Step 1: Blacklist Check
+        if self._contains_any(message.content, self.blacklist_patterns):
+            return []  # Drop
 
-        
-        # Check if intelligence is enabled
+        # Step 2: Whitelist Check (Critical Fix)
+        # This MUST happen BEFORE any LLM call
+        if not self._contains_any(message.content, self.whitelist_patterns):
+            # Log and drop irrelevant messages (e.g., "中午吃什么")
+            logger.debug(f"Ignored irrelevant message: {message.content[:50]}...")
+            return []  # Drop (Ignore irrelevant messages)
+
+        # Step 3: LLM Extraction (Only reachable if Steps 1-2 passed)
         if settings.intelligence.enabled:
             # Call LLMGateway.analyze() for intelligent extraction
             llm_results = self.llm_gateway.analyze(
@@ -84,7 +77,7 @@ class SignalProcessor:
                 temperature=settings.intelligence.temperature,
                 timeout=settings.intelligence.timeout
             )
-            
+
             # If LLM succeeds, use its results
             if llm_results:
                 signals = []
@@ -104,17 +97,10 @@ class SignalProcessor:
                 return signals
             else:
                 # If LLM fails, fall back to basic extraction
-                return [self._extract_basic_info(message)]
+                return self._extract_basic_info(message)
         else:
-            # Return basic result with manual_check intent
-            return [MarketSignal(
-                raw_msg_id=message.id,
-                intent="manual_check",
-                timestamp=message.timestamp,
-                group=message.room,
-                sender=message.sender,
-                raw_content=message.content
-            )]
+            # Step 4: Fallback (Regex extraction if LLM disabled)
+            return self._extract_basic_info(message)
     
     def _extract_basic_info(self, message: RawMessage) -> List[MarketSignal]:
         """
