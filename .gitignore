@@ -3,6 +3,7 @@ config/
 wxauto_logs/
 data/
 .claude/
+CLAUDE.md
 
 # --- Python Basics ---
 

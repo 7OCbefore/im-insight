@@ -105,63 +105,68 @@ class WeChatClient:
     @apply_jitter
     def get_recent_messages(self) -> List[RawMessage]:
         """
-        Fetch recent messages from WeChat client.
-        
+        Fetch recent messages from WeChat client using targeted filtering.
+
         Returns:
             List of RawMessage objects
         """
+        messages = []
+
         try:
-            # Get new messages from WeChat
+            # Get new messages from WeChat (keeps original API for compatibility)
             raw_data = self.wechat.GetNextNewMessage()
-            
-            # Convert to RawMessage objects
-            messages = []
+
             if isinstance(raw_data, dict):
                 # Extract chat_name and msg list explicitly from the dict
-                # Fix for Technical Advisory 001: Incorrect Room Name Parsing
                 chat_name = raw_data.get('chat_name', 'Unknown')
                 msg_list = raw_data.get('msg', [])
-                
+
+                # EARLY FILTERING: Check if chat_name is a target group BEFORE processing
+                # This prevents processing non-target sessions (Personal DMs, irrelevant groups)
+                if not self._is_target_group(chat_name):
+                    logger.debug(f"Skipping non-target session: {chat_name}")
+                    return []  # Return empty list - don't process non-targets
+
+                logger.info(f"Processing target session: {chat_name}")
+
+                # Only process messages from target groups
                 if isinstance(msg_list, list):
                     for msg in msg_list:
                         # Extract message attributes
                         try:
                             content = getattr(msg, 'content', '')
                             sender = getattr(msg, 'sender', '')
-                            
+
                             # Try to get timestamp, fallback to current time if not available
                             timestamp = getattr(msg, 'time', datetime.now())
                             if not isinstance(timestamp, datetime):
                                 timestamp = datetime.now()
-                            
+
                             # Check for duplicates
                             if self.deduplicator.is_duplicate(timestamp, sender, content):
                                 continue
-                            
+
                             # Generate message ID
                             msg_id = self.deduplicator._generate_hash(timestamp, sender, content)
-                            
+
                             # Create RawMessage object
                             raw_msg = RawMessage(
                                 id=msg_id,
                                 content=content,
                                 sender=sender,
-                                room=chat_name if chat_name != sender else None,  # Assume room if different from sender
+                                room=chat_name if chat_name != sender else None,
                                 timestamp=timestamp
                             )
-                            
-                            # Apply Group Filtering
-                            is_target = self._is_target_group(raw_msg.room)
-                            if not is_target:
-                                continue
-                            
+
+                            # Add to messages list
                             messages.append(raw_msg)
+
                         except Exception as e:
                             logger.warning(f"Failed to process individual message: {e}")
                             continue
-            
+
             return messages
-            
+
         except Exception as e:
             logger.error(f"Error fetching messages from WeChat: {e}")
-            return []  # Return empty list on error to prevent crashes
+            return []
