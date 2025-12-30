@@ -9,6 +9,8 @@ import json
 import asyncio
 import httpx
 import logging
+import time
+from collections import deque
 from typing import Optional, Dict, Any, List
 
 # Configure logger
@@ -50,6 +52,8 @@ class LLMGateway:
             "输入: '出两个24散飞 2810，还有两条芙蓉王 400'\n"
             "输出: [{\"intent\": \"Sell\", \"Item Name\": \"飞天茅台\", \"Price\": 2810}, {\"intent\": \"Sell\", \"Item Name\": \"芙蓉王\", \"Price\": 400}]"
         )
+        self._rate_window = deque()
+        self._rate_limit = 60
     
     async def _call_api(self, endpoint_url: str, api_key: str, model: str, 
                        messages: list, temperature: float = 0.1, 
@@ -135,6 +139,9 @@ class LLMGateway:
         Returns:
             List[Dict]: List of extracted data objects, empty list if no trading intent
         """
+        # Rate limit before preparing the messages
+        self._throttle()
+
         # Prepare the messages for the chat completion API
         messages = [
             {"role": "system", "content": self.system_prompt},
@@ -167,6 +174,21 @@ class LLMGateway:
         except Exception as e:
             logger.error(f"Error running async LLM call: {e}")
             return []
+
+    def _throttle(self) -> None:
+        now = time.monotonic()
+        window = 60.0
+        while self._rate_window and now - self._rate_window[0] > window:
+            self._rate_window.popleft()
+        if len(self._rate_window) >= self._rate_limit:
+            sleep_for = window - (now - self._rate_window[0])
+            if sleep_for > 0:
+                logger.warning("LLM rate limit reached; delaying request")
+                time.sleep(sleep_for)
+            now = time.monotonic()
+            while self._rate_window and now - self._rate_window[0] > window:
+                self._rate_window.popleft()
+        self._rate_window.append(time.monotonic())
 
 
 # Example usage

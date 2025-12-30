@@ -39,8 +39,23 @@ class IntelligenceConfig(BaseModel):
 
 class RulesConfig(BaseModel):
     """Content filtering rules configuration."""
-    whitelist: List[str]
+    intent_whitelist: List[str]
     blacklist: List[str]
+
+
+class StorageConfig(BaseModel):
+    """SQLite storage configuration."""
+    db_path: str
+    raw_retention_days: int
+
+
+class ReportConfig(BaseModel):
+    """Report generation configuration."""
+    output_dir: str
+    temp_valid_days: int
+    temp_goods_whitelist: List[str] = []
+    auto_enabled: bool = False
+    auto_interval_min: int = 30
 
 
 class Settings(BaseSettings):
@@ -55,6 +70,8 @@ class Settings(BaseSettings):
     ingestion: IngestionConfig
     intelligence: IntelligenceConfig
     rules: RulesConfig
+    storage: StorageConfig
+    report: ReportConfig
 
 
 def load_settings(config_path: str = "config/settings.yaml") -> Settings:
@@ -72,12 +89,16 @@ def load_settings(config_path: str = "config/settings.yaml") -> Settings:
         yaml.YAMLError: If the configuration file is invalid YAML
         ValidationError: If the configuration doesn't match the schema
     """
-    # Check if config file exists
+    # Check if config file exists, with fallback to legacy config.yaml
     config_file = Path(config_path)
+    if not config_file.exists() and config_path == "config/settings.yaml":
+        legacy_path = Path("config.yaml")
+        if legacy_path.exists():
+            config_file = legacy_path
+
     if not config_file.exists():
         raise FileNotFoundError(
-            f"Configuration file not found at {config_path}. "
-            "Please create it with the required settings structure."
+            "未找到配置文件，请确认存在 config/settings.yaml 或 config.yaml。"
         )
     
     # Load YAML config

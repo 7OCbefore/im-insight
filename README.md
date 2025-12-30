@@ -1,6 +1,6 @@
 # IM-Insight (Ingestion Layer)
 
-This project implements a WeChat monitoring system that passively captures messages from the WeChat PC Client (v3.9.x) using the `wxauto` library.
+This project implements a WeChat monitoring system that passively captures messages from the WeChat PC Client (v3.9.x) using the `wxauto` library, extracts trade signals, and stores results in SQLite.
 
 ## Features
 
@@ -9,6 +9,8 @@ This project implements a WeChat monitoring system that passively captures messa
 - Message deduplication to avoid processing duplicates
 - Human simulation with random jitter delays
 - Structured message data with timestamps and metadata
+- SQLite persistence for raw messages and trade signals
+- CSV reports (aggregate, per-group, and temporary goods whitelist)
 
 ## Components
 
@@ -48,6 +50,15 @@ python main.py
 ```
 
 The program will continuously monitor for new WeChat messages and log them to the console.
+
+## Reports
+
+Reports are generated automatically based on `report.auto_enabled` and
+`report.auto_interval_min`. You can still trigger manually:
+
+```bash
+python src/action/report.py --use-config
+```
 
 ## Error Handling
 

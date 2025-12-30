@@ -23,10 +23,14 @@ class SignalProcessor:
     
     def __init__(self):
         """Initialize the SignalProcessor with compiled regex patterns and LLM gateway."""
-        self.whitelist_patterns = [re.compile(pattern, re.IGNORECASE) 
-                                 for pattern in settings.rules.whitelist]
-        self.blacklist_patterns = [re.compile(pattern, re.IGNORECASE) 
-                                 for pattern in settings.rules.blacklist]
+        self.intent_patterns = [
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in settings.rules.intent_whitelist
+        ]
+        self.blacklist_patterns = [
+            re.compile(pattern, re.IGNORECASE)
+            for pattern in settings.rules.blacklist
+        ]
         self.llm_gateway = LLMGateway()
     
     def _contains_any(self, text: str, patterns) -> bool:
@@ -45,6 +49,14 @@ class SignalProcessor:
                 return True
         return False
 
+    def is_trade_related(self, message: RawMessage) -> bool:
+        """Classify if a message is trade-related based on blacklist and intent whitelist."""
+        if self._contains_any(message.content, self.blacklist_patterns):
+            return False
+        if not self.intent_patterns:
+            return True
+        return self._contains_any(message.content, self.intent_patterns)
+
     def process(self, message: RawMessage) -> List[MarketSignal]:
         """
         Process a raw message through the L1 filter.
@@ -59,12 +71,10 @@ class SignalProcessor:
         if self._contains_any(message.content, self.blacklist_patterns):
             return []  # Drop
 
-        # Step 2: Whitelist Check (Critical Fix)
-        # This MUST happen BEFORE any LLM call
-        if not self._contains_any(message.content, self.whitelist_patterns):
-            # Log and drop irrelevant messages (e.g., "中午吃什么")
-            logger.debug(f"Ignored irrelevant message: {message.content[:50]}...")
-            return []  # Drop (Ignore irrelevant messages)
+        # Step 2: Intent Whitelist Check (trade relevance)
+        if self.intent_patterns and not self._contains_any(message.content, self.intent_patterns):
+            logger.debug(f"Ignored non-trade message: {message.content[:50]}...")
+            return []  # Drop
 
         # Step 3: LLM Extraction (Only reachable if Steps 1-2 passed)
         if settings.intelligence.enabled:

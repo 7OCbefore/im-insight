@@ -1,0 +1,46 @@
+app:
+  name: "IM-Insight"
+  debug: true
+  environment: "production"
+
+ingestion:
+  scan_interval_min: 1.0
+  scan_interval_max: 3.0
+  target_window_title: "WeChat"
+  monitor_groups: 
+    - "apex白给小分队"
+    - "fy"
+
+intelligence:
+  enabled: true
+  provider: "siliconflow"
+  endpoint_url: "https://api.siliconflow.cn/v1/chat/completions"
+  api_key: "sk-vekiubtgimqhuqeuovkujgznnxuvyoprdjrksplltlrojvqp"
+  model: "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+  temperature: 0.1
+  timeout: 10
+
+rules:
+  intent_whitelist:
+    - "求购"
+    - "收"
+    - "出"
+    - "接"
+    - "询价"
+    - "报价"
+  blacklist:
+    - "广告"
+    - "兼职"
+    - "拼车"
+
+storage:
+  db_path: "data/im_insight.db"
+  raw_retention_days: 60
+
+report:
+  output_dir: "data/reports"
+  temp_valid_days: 7
+  temp_goods_whitelist:
+    - "飞天"
+  auto_enabled: true
+  auto_interval_min: 30
